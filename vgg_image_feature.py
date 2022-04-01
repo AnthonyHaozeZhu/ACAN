@@ -66,4 +66,4 @@ if __name__ == "__main__":
         img_feature = img_feature.transpose(1, 0)
         img_features[item] = img_feature
 
-    torch.save(img_features, "./data/img_vgg_features.pt")
+    torch.save(img_features, "data/img_vgg_features.pt")

@@ -1,10 +1,3 @@
-# -*- coding: UTF-8 -*-
-"""
-@Project ：entity recognition 
-@File ：load_data.py
-@Author ：AnthonyZ
-@Date ：2022/3/30 22:32
-"""
 import os
 import copy
 import json
@@ -15,8 +8,29 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset
 
+from utils import load_vocab, preprocess_word
 
 logger = logging.getLogger(__name__)
+
+
+class InputExample(object):
+    def __init__(self, guid, img_id, words, labels):
+        self.guid = guid  # int
+        self.img_id = img_id  # int
+        self.words = words  # list
+        self.labels = labels  # list
+
+    def __repr__(self):
+        return str(self.to_json_string())
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
 class InputFeatures(object):
@@ -42,42 +56,99 @@ class InputFeatures(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
-def load_vocab():
-    word_vocab_path = "./vocab/word_vocab"
-    char_vocab_path = "./vocab/char_vocab"
+class TweetProcessor(object):
+    """Processor for the Tweet data set """
 
-    word_vocab = dict()
-    char_vocab = dict()
-    word_ids_to_tokens = []
-    char_ids_to_tokens = []
+    def __init__(self, args):
+        self.args = args
 
-    # Load word vocab
-    with open(word_vocab_path, "r", encoding="utf-8") as f:
-        # Set the exact vocab size
-        # If the original vocab size is smaller than args.vocab_size, then set args.vocab_size to original one
-        word_lines = f.readlines()
-        word_vocab_size = len(word_lines)
+    @classmethod
+    def get_labels(cls):
+        return ["[pad]", "[unk]", "O", "B-PER", "I-PER", "B-LOC", "I-LOC", "B-ORG", "I-ORG", "B-OTHER", "I-OTHER"]
 
-        for idx, line in enumerate(word_lines[:word_vocab_size]):
-            line = line.strip()
-            word_vocab[line] = idx
-            word_ids_to_tokens.append(line)
+    @classmethod
+    def get_label_vocab(cls):
+        label_vocab = dict()
+        for idx, label in enumerate(cls.get_labels()):
+            label_vocab[label] = idx
 
-    # Load char vocab
-    with open(char_vocab_path, "r", encoding="utf-8") as f:
-        char_lines = f.readlines()
-        char_vocab_size = len(char_lines)
-        for idx, line in enumerate(char_lines[:char_vocab_size]):
-            line = line.strip()
-            char_vocab[line] = idx
-            char_ids_to_tokens.append(line)
+        return label_vocab
 
-    return word_vocab, char_vocab, word_ids_to_tokens, word_vocab_size, char_vocab_size
+    def load_img_features(self):
+        return torch.load(os.path.join(self.args.data_dir, self.args.img_feature_file))
+
+    @classmethod
+    def _read_file(cls, input_file):
+        """Read tsv file, and return words and label as list"""
+        with open(input_file, "r", encoding="utf-8") as f:
+            sentences = []
+
+            sentence = [[], []]  # [[words], [tags], img_id]
+            for line in f:
+                if line.strip() == "":
+                    continue
+
+                if line.startswith("IMGID:"):
+                    if sentence[0]:
+                        sentences.append(sentence)
+                        sentence = [[], []]  # Flush
+
+                    # Add img_id at last
+                    img_id = int(line.replace("IMGID:", "").strip())
+                    sentence.append(img_id)
+                else:
+                    try:
+                        word, tag = line.strip().split("\t")
+                        word = preprocess_word(word)
+                        sentence[0].append(word)
+                        sentence[1].append(tag)
+                    except:
+                        logger.info("\"{}\" cannot be splitted".format(line.rstrip()))
+            # Flush the last one
+            if sentence[0]:
+                sentences.append(sentence)
+
+            return sentences
+
+    def _create_examples(self, sentences, set_type):
+        """Creates examples for the training dev, and test sets."""
+        examples = []
+
+        for (i, sentence) in enumerate(sentences):
+            words, labels, img_id = sentence[0], sentence[1], sentence[2]
+            assert len(words) == len(labels)
+
+            guid = "%s-%s" % (set_type, i)
+            if i % 10000 == 0:
+                logger.info(sentence)
+            examples.append(InputExample(guid=guid, img_id=img_id, words=words, labels=labels))
+
+        return examples
+
+    def get_examples(self, mode):
+        """
+        :param mode: train, dev, test
+        """
+        file_to_read = None
+        if mode == 'train':
+            file_to_read = self.args.train_file
+        elif mode == 'dev':
+            file_to_read = self.args.dev_file
+        elif mode == 'test':
+            file_to_read = self.args.test_file
+
+        logger.info("LOOKING AT {}".format(os.path.join(self.args.data_dir, file_to_read)))
+        return self._create_examples(self._read_file(os.path.join(self.args.data_dir, file_to_read)), mode)
 
 
-def load_word_matrix(word_vocab, word_vocab_size, word_emb_dim=200):
+def load_word_matrix(args, word_vocab):
+    if not os.path.exists(args.wordvec_dir):
+        os.mkdir(args.wordvec_dir)
+
+    # Making new word vector
+    logger.info("Building word matrix...")
     embedding_index = dict()
-    with open(os.path.join("./wordvec/word_vector_200d.vec"), 'r', encoding='utf-8') as f:
+    with open(os.path.join(args.wordvec_dir, args.w2v_file), 'r', encoding='utf-8') as f:
         for line in f:
             line = line.rstrip()
             values = line.split()
@@ -85,7 +156,7 @@ def load_word_matrix(word_vocab, word_vocab_size, word_emb_dim=200):
             coefs = np.asarray(values[1:], dtype='float32')
             embedding_index[word] = coefs
 
-    word_matrix = np.zeros((word_vocab_size, word_emb_dim), dtype='float32')
+    word_matrix = np.zeros((args.word_vocab_size, args.word_emb_dim), dtype='float32')
     cnt = 0
 
     for word, i in word_vocab.items():
@@ -93,7 +164,7 @@ def load_word_matrix(word_vocab, word_vocab_size, word_emb_dim=200):
         if embedding_vector is not None:
             word_matrix[i] = embedding_vector
         else:
-            word_matrix[i] = np.random.uniform(-0.25, 0.25, word_emb_dim)
+            word_matrix[i] = np.random.uniform(-0.25, 0.25, args.word_emb_dim)
             cnt += 1
     logger.info('{} words not in pretrained matrix'.format(cnt))
 
@@ -189,8 +260,44 @@ def convert_examples_to_features(examples,
     return features
 
 
+def load_data(args, mode):
+    processor = TweetProcessor(args)
 
+    # Load data features from dataset file
+    logger.info("Creating features from dataset file at %s", args.data_dir)
+    if mode == "train":
+        examples = processor.get_examples("train")
+    elif mode == "dev":
+        examples = processor.get_examples("dev")
+    elif mode == "test":
+        examples = processor.get_examples("test")
+    else:
+        raise Exception("For mode, Only train, dev, test is available")
 
-if __name__ == "__main__":
-    a, b, c, d, e = load_vocab()
-    mm = load_word_matrix(a, d)
+    word_vocab, char_vocab, _, _ = load_vocab(args)
+    label_vocab = processor.get_label_vocab()
+
+    # Use cross entropy ignore index as padding label id so that only real label ids contribute to the loss later
+    features = convert_examples_to_features(examples,
+                                            processor.load_img_features(),
+                                            args.max_seq_len,
+                                            args.max_word_len,
+                                            word_vocab,
+                                            char_vocab,
+                                            label_vocab)
+
+    # Convert to Tensors and build dataset
+    all_word_ids = torch.tensor([f.word_ids for f in features], dtype=torch.long)
+    all_char_ids = torch.tensor([f.char_ids for f in features], dtype=torch.long)
+    all_img_feature = torch.stack([f.img_feature for f in features])
+    all_mask = torch.tensor([f.mask for f in features], dtype=torch.long)
+    all_label_ids = torch.tensor([f.label_ids for f in features], dtype=torch.long)
+
+    logger.info("all_word_ids.size(): {}".format(all_word_ids.size()))
+    logger.info("all_char_ids.size(): {}".format(all_char_ids.size()))
+    logger.info("all_img_feature.size(): {}".format(all_img_feature.size()))
+    logger.info("all_mask.size(): {}".format(all_mask.size()))
+    logger.info("all_label_ids.size(): {}".format(all_label_ids.size()))
+
+    dataset = TensorDataset(all_word_ids, all_char_ids, all_img_feature, all_mask, all_label_ids)
+    return dataset
