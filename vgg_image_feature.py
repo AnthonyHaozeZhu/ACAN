@@ -58,7 +58,7 @@ if __name__ == "__main__":
             im[:, :, c] = im[:, :, c] - mean_pixel[c]
         im = im.transpose((2, 0, 1))
         im = np.expand_dims(im, axis=0)
-        im = torch.tensor(im).float()
+        im = torch.tensor(im).float().to(device)
         start = time.time()
         feature = model.forward(im)
         print('%s feature extracted in %f  seconds.' % (img_path, time.time() - start))
