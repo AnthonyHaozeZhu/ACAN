@@ -106,8 +106,16 @@ if __name__ == '__main__':
     epoch_iterator = tqdm(train_dataloader, desc="Iteration")
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to('cpu')for t in batch)  # GPU or CPU
-        a = batch[1]
-    net = NER.CharCNN()
-    t = net.forward(a)
+        a = batch[0]
+        b = batch[1]
+        c = batch[2]
+        d = batch[3]
+        e = batch[4]
+    # tt = NER.bi_LSTM(pretrained_word_matrix)
+    # a = tt()
+
+    net = NER.ACN(pretrained_word_matrix)
+    m, n = net(a, b, c, d, e)
+
 
 
