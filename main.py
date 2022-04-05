@@ -7,13 +7,10 @@
 """
 import argparse
 
-from torch.utils.data import DataLoader, RandomSampler
-from tqdm import tqdm
+from trainer import Trainer, OPTIMIZER_LIST
 
-import NER
-
-from utils import init_logger, build_vocab, download_vgg_features, set_seed, load_vocab
-from load_data import load_data, load_word_matrix
+from utils import init_logger, build_vocab, download_vgg_features, set_seed
+from load_data import load_data
 
 
 def main(args):
@@ -61,7 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=7, help="random seed for initialization")
     parser.add_argument("--train_batch_size", default=16, type=int, help="Batch size for training")
     parser.add_argument("--eval_batch_size", default=32, type=int, help="Batch size for evaluation")
-    # parser.add_argument("--optimizer", default="adam", type=str, help="Optimizer selected in the list: " + ", ".join(OPTIMIZER_LIST.keys()))
+    parser.add_argument("--optimizer", default="adam", type=str, help="Optimizer selected in the list: " + ", ".join(OPTIMIZER_LIST.keys()))
     parser.add_argument("--learning_rate", default=0.001, type=float, help="The initial learning rate")
     parser.add_argument("--num_train_epochs", default=5.0, type=float, help="Total number of training epochs to perform.")
     parser.add_argument("--slot_pad_label", default="[pad]", type=str, help="Pad token for slot label pad (to be ignore when calculate loss)")
@@ -82,40 +79,21 @@ if __name__ == '__main__':
     args.num_img_region = 49
     args.img_feat_dim = 512
 
-    train_dataset = load_data(
-        args,
-        mode="train")
-    dev_dataset = load_data(
-        args,
-        mode="dev")
-    test_dataset = load_data(
-        args,
-        mode="test")
-    model = NER.CharCNN()
-    train_sampler = RandomSampler(
-        train_dataset)
-    train_dataloader = DataLoader(
-        train_dataset,
-        sampler=train_sampler,
-        batch_size=args.train_batch_size)
-    # a = model.forward(train_dataset)
-    word_vocab, char_vocab, word_ids_to_tokens, char_ids_to_tokens = load_vocab(args)
-    pretrained_word_matrix = load_word_matrix(
-        args,
-        word_vocab)
-    epoch_iterator = tqdm(train_dataloader, desc="Iteration")
-    for step, batch in enumerate(epoch_iterator):
-        batch = tuple(t.to('cpu')for t in batch)  # GPU or CPU
-        a = batch[0]
-        b = batch[1]
-        c = batch[2]
-        d = batch[3]
-        e = batch[4]
-    # tt = NER.bi_LSTM(pretrained_word_matrix)
-    # a = tt()
+    init_logger()
+    set_seed(args)
+    build_vocab(args)
 
-    net = NER.ACN(pretrained_word_matrix)
-    m, n = net(a, b, c, d, e)
+    train_dataset = load_data(args, mode="train")
+    dev_dataset = load_data(args, mode="dev")
+    test_dataset = load_data(args, mode="test")
 
+    trainer = Trainer(args, train_dataset, dev_dataset, test_dataset)
+
+    # if args.do_train:
+    # trainer.train()
+
+    # if args.do_eval:
+    trainer.load_model()
+    trainer.evaluate("test")
 
 
